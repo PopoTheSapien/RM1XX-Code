@@ -1,0 +1,266 @@
+//******************************************************************************
+// Library Import 
+//******************************************************************************
+#include "RM1xx-defs.h"
+
+#define AN_IN_BATT		3
+#define AN_IN_ANG 		4
+#define AN_IN_TEMP 		5
+#define AN_IN_LUX		6
+#define DI_MOV 			28
+
+#define DO_LED 		30
+
+Dim tempC, tempC$, ftemp$, nJoinState$
+Dim rc, enable_sleep, mov, data$
+DIM Batt, Ang, Temp, Lux, opt_debug, code$, count
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+enable_sleep = 0
+opt_debug = 1
+
+
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+function sleep()
+
+	if enable_sleep == 1 then //| (mov <= 0) then
+		print "sleep"
+		//Delay Routine
+		Dim ftick : ftick = GetTickCount()
+		while (getticksince(ftick) < 500 )
+			continue
+		endwhile	
+	
+		rc = gpiosetfunc(DI_MOV,1,0x00)
+		rc = SystemStateSet(0)
+	else
+		TimerStart(0,25000,0)
+	endif
+	
+endfunc 1
+
+
+
+//============================================================================== 
+// During Lora joining
+//==============================================================================
+FUNCTION LoramacJoining() As Integer
+	if opt_debug == 1 then
+		print "\n [LORA] Joining ..."
+	endif
+endfunc 1
+
+
+//============================================================================== 
+// Lora net join fail
+//==============================================================================
+function LoramacJoinFailed() As Integer
+
+	if opt_debug == 1 then
+		print "\n [LORA] Join Failed"
+	endif		
+	
+	code$ = "1000"
+	
+	//Try again on next wakeup
+	exitfunc sleep()
+	
+endfunc 1
+
+
+//============================================================================== 
+// After Lora joining
+//==============================================================================
+FUNCTION LoramacJoined() As Integer
+	
+	if opt_debug == 1 then
+		print "\n [LORA] Joined"
+	endif
+
+	//Send on next wakeup
+	code$ = "01"
+	exitfunc sleep()
+	
+endfunc 1
+
+
+//============================================================================== 
+// Lora Message delivery success :)
+//==============================================================================
+function LoraMsgDone() As Integer   
+
+	if opt_debug == 1 then
+		print "\n [LORA] Messgage sent: " + data$
+	endif
+	
+	count = count + 1
+	if count >= 4 then
+		enable_sleep = 1
+	endif
+	exitfunc sleep()
+
+endfunc 1 
+
+//============================================================================== 
+// ALLLLLL Lora Messages delivered
+//==============================================================================
+function LoraMsgComplete() As Integer   
+	if opt_debug == 1 then
+		print "\n [LORA] All messages sent "
+	endif
+	
+	code$ = ""
+
+endfunc 1 
+
+//============================================================================== 
+// Failed to deliver the message :(
+//==============================================================================
+function LoramacTxTimeout() As Integer
+	
+	code$ = "1001"
+	
+	if opt_debug == 1 then
+		print "\nMessgage failed..."
+	endif
+	
+	exitfunc sleep()
+
+endfunc 1
+
+//============================================================================== 
+// LoRa RX timeout
+//==============================================================================
+function LoramacRxTimeout() As Integer
+	
+	sprint #code$, "102"
+
+
+endfunc 1
+
+
+function lorasend()
+
+	rc = LORAMACTxData(6,data$, 1)
+
+	TimerStart(0,2000,0)
+
+endfunc 1
+	
+	
+function loraconnect()
+
+	rc = LORAMACGetOption(LORAMAC_OPT_JOIN_STATE, nJoinState$)
+
+	if strcmp(nJoinState$,"Joined")!=0 then  
+	
+		rc = LORAMACJoin(1)
+		
+		print "\n Attemp connect LoRa ... 646: "; rc
+		
+	else 
+		exitfunc lorasend()
+	endif
+endfunc 1
+
+
+function get_data() as Integer
+
+	rc = GpioRead(AN_IN_BATT)
+	Batt = ((rc * 1200)/1023) 
+	print "[BATTERY] "; rc ; " _____ " ; Batt; "\n"
+	
+	rc = GpioRead(AN_IN_ANG)
+	Ang = ((rc * 1200)/1023) 
+	print "[ANGLE] "; rc ; " _____ " ; Ang; "\n"
+	
+	rc = GpioRead(AN_IN_TEMP)
+	Temp = (((rc * 1200)/1023) -500) 
+	print "[TEMP] "; rc ; " _____ " ; Temp; "\n"
+	
+	rc = GpioRead(AN_IN_LUX)
+	Lux = ((rc * 1200)/1023) 
+	print "[LUX] "; rc ; " _____ " ; Lux; "\n"
+	
+	rc = GpioRead(DI_MOV)
+	print "[MOV INS] "; rc ; " _____ " ; rc; "\n"
+
+	print "[MOV] "; rc ; " _____ " ; mov; "\n"
+
+	sprint #data$, Batt; Ang; Temp; Lux; mov
+	
+	rc = loraconnect()
+	
+	
+endfunc 1
+
+function flash() as integer
+	GpioWrite(DO_LED, !GpioRead(DO_LED))
+	TimerStart(0,1000,0)
+	
+	print "fsdf\n"
+endfunc 1
+
+
+function printmov()
+	rc = GpioRead(DI_MOV) 
+	if rc == 1 then
+		print "-"
+	endif
+	TimerStart(2,1000,0)
+endfunc 1
+
+//==============================================================================
+// Increment Movement counter
+//==============================================================================
+function IncMov()
+	
+	mov = mov + 1 		
+
+endfunc 1
+
+
+print "\n[Starting.....]"
+rc = gpiosetfunc(AN_IN_BATT,1,0x02)     
+rc = GpioSetFunc(AN_IN_BATT,3, 0x11) 
+
+rc = gpiosetfunc(AN_IN_ANG,1,0x02)     
+rc = GpioSetFunc(AN_IN_ANG,3, 0x11) 
+ 
+rc = gpiosetfunc(AN_IN_TEMP,1,0x02)     
+rc = GpioSetFunc(AN_IN_TEMP,3, 0x11) 
+  
+rc = gpiosetfunc(AN_IN_LUX,1,0x02)     
+rc = GpioSetFunc(AN_IN_LUX,3, 0x11) 
+
+// Movement sensor
+rc = gpiosetfunc(DI_MOV,1,0x00)
+print "\n1376 " ; rc
+rc = gpioassignevent(0,DI_MOV,0)
+print "\n1378 " ; rc
+
+print "\nSetup LED..."
+rc = gpiosetfunc(DO_LED,2,1)
+
+
+onevent EVLORAMACJOINING		call LoramacJoining
+onevent EVLORAMACJOINED			call LoramacJoined
+onevent EVLORAMACJOINFAILED		call LoramacJoinFailed
+onevent EVLORAMACTXCOMPLETE		call LoraMsgComplete
+onevent EVLORAMACTXDONE			call LoraMsgDone
+onevent EVLORAMACRXTIMEOUT 		call LoramacRxTimeout
+onevent EVLORAMACTXTIMEOUT 		call LoramacTxTimeout
+
+
+onevent EVDETECTCHAN0 call IncMov
+onevent EVTMR0 	call get_data
+onevent EVTMR1 	call sleep
+
+onevent EVTMR2 	call printmov
+
+TimerStart(0,1200,0)
+
+
+waitevent
